@@ -358,8 +358,9 @@ export default function AdminMatchAction({ match }) {
   const [open, setOpen] = useState(false)
   const toast = useToast()
   const close = useCallback(() => setOpen(false), [])
+  const { data: season } = useSeason(match?.leagueId, match?.seasonId)
 
-  if (!isAdmin || !match?.id) return null
+  if (!isAdmin || !match?.id || season?.status === 'completed') return null
 
   const played = match.status === 'played'
 
