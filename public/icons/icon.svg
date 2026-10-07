@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FC League">
+  <rect width="64" height="64" rx="20" fill="#E4E9F2"/>
+  <circle cx="32" cy="32" r="20" fill="#C5D4FF" stroke="rgba(255,255,255,0.7)" stroke-width="2"/>
+  <circle cx="32" cy="32" r="7" fill="none" stroke="#243040" stroke-width="1.7"/>
+  <path d="M32 12v8.2M32 43.8V52M12 32h8.2M43.8 32H52M18.2 18.2l5.8 5.8M40 40l5.8 5.8M45.8 18.2 40 24M24 40l-5.8 5.8" fill="none" stroke="#243040" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,18 @@
+{
+  "name": "FC League",
+  "short_name": "FC League",
+  "description": "Fixtures, results, and the table for a friends' football league.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#E4E9F2",
+  "theme_color": "#E4E9F2",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

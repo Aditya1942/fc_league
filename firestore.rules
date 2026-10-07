@@ -1,0 +1,566 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // No emails, phone numbers, or credentials are stored. Public read of
+    // leagues/** is an explicit product requirement: viewers are not signed in.
+    // Writes require an admins/{request.auth.uid} document. Clients cannot
+    // write the admins collection. The first admin is created in the console
+    // or by the emulator seed (Bearer owner), never by security rules.
+    //
+    // Collection: admins
+    // Document ID: auth uid
+    // Fields:
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: leagues
+    // Document ID: auto-id
+    // Fields:
+    //   - name: string (required, 1-60)
+    //   - emoji: string (required, 1-32)
+    //   - color: string (required, #RRGGBB)
+    //   - activeSeasonId: string or null (id of the single active season)
+    //   - createdAt: timestamp (required, request.time on create, immutable)
+    //   - updatedAt: timestamp (required, request.time)
+    //
+    // Collection: leagues/{leagueId}/players
+    // Fields:
+    //   - name: string (required, 1-40)
+    //   - clubName: string (required, 1-48)
+    //   - shortCode: string (required, 2-4 chars, A-Z and digits)
+    //   - color: string (required, #RRGGBB)
+    //   - emoji: string (required, 1-32)
+    //   - archived: bool (required)
+    //   - createdAt: timestamp (required, request.time on create, immutable)
+    //   - updatedAt: timestamp (required, request.time)
+    //
+    // Collection: leagues/{leagueId}/seasons
+    // Fields:
+    //   - name: string (required, 1-60)
+    //   - number: int (required, 1-999)
+    //   - status: string (required, draft | active | completed)
+    //   - participantIds: list of 2-12 unique player ids
+    //   - legs: int (required, 1 or 2)
+    //   - points: map { win, draw, loss } ints 0-20
+    //   - startDate: timestamp (required, 2020-01-01 through 800 days ahead)
+    //   - endDate: timestamp or null (null unless completed)
+    //   - championId: string or null (null unless completed; a participant)
+    //   - finalStandings: list or null (null unless completed; one row per participant)
+    //   - createdAt / updatedAt: timestamps (createdAt immutable; both request.time when written)
+    //
+    // Standing row:
+    //   playerId, position, played, won, drawn, lost, goalsFor, goalsAgainst,
+    //   goalDiff, points, form (list of up to 5 W/D/L, newest first)
+    //
+    // Transitions: draft→draft, draft→active, active→active, active→completed,
+    // completed→completed, completed→active (reopen).
+    // Activating or reopening sets leagues.activeSeasonId in the same batch.
+    // Completing the current season clears activeSeasonId in the same batch.
+    // Setup fields freeze once the season leaves draft.
+    //
+    // Collection: leagues/{leagueId}/seasons/{seasonId}/matches
+    // Fields:
+    //   - leagueId, seasonId: strings (must match the path, immutable)
+    //   - matchday: int 1-60 (immutable)
+    //   - homeId, awayId: player ids, homeId != awayId (immutable, participants on create)
+    //   - playerIds: [homeId, awayId] (immutable; collection-group array-contains)
+    //   - status: scheduled | played | postponed | void
+    //   - homeGoals, awayGoals: int 0-99 when played, otherwise null
+    //   - scheduledAt: timestamp or null
+    //   - playedAt: timestamp when played (2020-01-01 through 1 day ahead), otherwise null
+    //   - details: null or the map below
+    //   - createdAt / updatedAt
+    //
+    // Creates are scheduled with null goals, playedAt, and details.
+    // Deletes are allowed only while the parent season is draft.
+    // Result edits are allowed while the parent season is draft or active.
+    //
+    // details map (all keys required when details is not null):
+    //   scorers: list of up to 12 { side: home|away, name, minute 0-130 }
+    //   homeTeamUsed, awayTeamUsed: strings 0-40
+    //   possession, shots, shotsOnTarget: { home, away } ints
+    //     (possession 0-100, shots and shots on target 0-99)
+    //   motm: string 0-40
+    //   notes: string 0-500
+    //
+    // Client queries these rules must allow:
+    //   leagues orderBy createdAt
+    //   players orderBy name
+    //   seasons orderBy number
+    //   matches orderBy matchday
+    //   collectionGroup matches where playerIds array-contains, orderBy playedAt
+    //   collectionGroup matches where leagueId ==, orderBy playedAt
+    //   get admins/{uid} for the signed-in uid
+    //
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data)
+        || request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data)
+        || request.resource.data.uid == resource.data.uid;
+    }
+
+    function isRecent(time) {
+      return time is timestamp
+        && time > request.time - duration.value(5, 'm')
+        && time <= request.time;
+    }
+
+    function isAdmin() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function keysExact(data, fields) {
+      return data.keys().hasOnly(fields) && data.keys().hasAll(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function stringBetween(value, minLen, maxLen) {
+      return value is string
+        && value.size() >= minLen
+        && value.size() <= maxLen;
+    }
+
+    function intIn(value, minValue, maxValue) {
+      return value is int && value >= minValue && value <= maxValue;
+    }
+
+    function idOk(id) {
+      return id is string
+        && id.size() >= 1
+        && id.size() <= 128
+        && id.matches('^[^/]+$');
+    }
+
+    function colorOk(value) {
+      return value is string && value.matches('^#[0-9A-Fa-f]{6}$');
+    }
+
+    function requiredTime(value) {
+      return value is timestamp
+        && value >= timestamp.date(2020, 1, 1)
+        && value <= request.time + duration.value(800, 'd');
+    }
+
+    function optionalTime(value) {
+      return value == null || requiredTime(value);
+    }
+
+    function leagueExists(leagueId) {
+      return exists(/databases/$(database)/documents/leagues/$(leagueId));
+    }
+
+    function seasonData(leagueId, seasonId) {
+      return get(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
+    }
+
+    function seasonDataAfter(leagueId, seasonId) {
+      return getAfter(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId)).data;
+    }
+
+    function participantsOk(ids) {
+      return ids is list
+        && ids.size() >= 2
+        && ids.size() <= 12
+        && ids.toSet().size() == ids.size()
+        && idOk(ids[0])
+        && idOk(ids[1])
+        && (ids.size() < 3 || idOk(ids[2]))
+        && (ids.size() < 4 || idOk(ids[3]))
+        && (ids.size() < 5 || idOk(ids[4]))
+        && (ids.size() < 6 || idOk(ids[5]))
+        && (ids.size() < 7 || idOk(ids[6]))
+        && (ids.size() < 8 || idOk(ids[7]))
+        && (ids.size() < 9 || idOk(ids[8]))
+        && (ids.size() < 10 || idOk(ids[9]))
+        && (ids.size() < 11 || idOk(ids[10]))
+        && (ids.size() < 12 || idOk(ids[11]));
+    }
+
+    function pointsOk(points) {
+      return points is map
+        && keysExact(points, ['win', 'draw', 'loss'])
+        && intIn(points.win, 0, 20)
+        && intIn(points.draw, 0, 20)
+        && intIn(points.loss, 0, 20);
+    }
+
+    // Rows are stored in position order. Index 0 is the champion (position 1).
+    function standingOk(row, participants) {
+      return row is map
+        && row.playerId in participants
+        && row.position is int
+        && row.played is int
+        && row.won + row.drawn + row.lost == row.played
+        && row.goalDiff == row.goalsFor - row.goalsAgainst
+        && row.points is int
+        && row.form is list
+        && row.form.size() <= 5;
+    }
+
+    function standingAt(standings, participants, index) {
+      return standings.size() <= index || standingOk(standings[index], participants);
+    }
+
+    // The rules engine allows 1000 expressions per write. Completion checks the
+    // champion row and the next two; every participant still has to appear in
+    // participantIds, and the list length must match.
+    function completedSnapshot(data) {
+      return idOk(data.championId)
+        && data.championId in data.participantIds
+        && requiredTime(data.endDate)
+        && data.finalStandings is list
+        && data.finalStandings.size() == data.participantIds.size()
+        && data.finalStandings.size() <= 12
+        && standingOk(data.finalStandings[0], data.participantIds)
+        && data.finalStandings[0].position == 1
+        && data.finalStandings[0].playerId == data.championId
+        && standingAt(data.finalStandings, data.participantIds, 1)
+        && standingAt(data.finalStandings, data.participantIds, 2);
+    }
+
+    function standingsOk(data) {
+      return data.status == 'completed'
+        ? completedSnapshot(data)
+        : data.finalStandings == null
+          && data.championId == null
+          && data.endDate == null;
+    }
+
+    function isValidLeague(data) {
+      return keysExact(data, ['name', 'emoji', 'color', 'activeSeasonId', 'createdAt', 'updatedAt'])
+        && stringBetween(data.name, 1, 60)
+        && stringBetween(data.emoji, 1, 32)
+        && colorOk(data.color)
+        && (data.activeSeasonId == null || idOk(data.activeSeasonId))
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function isValidPlayer(data) {
+      return keysExact(data, [
+          'name', 'clubName', 'shortCode', 'color', 'emoji', 'archived', 'createdAt', 'updatedAt'
+        ])
+        && stringBetween(data.name, 1, 40)
+        && stringBetween(data.clubName, 1, 48)
+        && data.shortCode is string
+        && data.shortCode.matches('^[A-Z0-9]{2,4}$')
+        && colorOk(data.color)
+        && stringBetween(data.emoji, 1, 32)
+        && data.archived is bool
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function isValidSeasonShape(data) {
+      return keysExact(data, [
+          'name', 'number', 'status', 'participantIds', 'legs', 'points',
+          'startDate', 'endDate', 'championId', 'finalStandings', 'createdAt', 'updatedAt'
+        ])
+        && stringBetween(data.name, 1, 60)
+        && intIn(data.number, 1, 999)
+        && data.status in ['draft', 'active', 'completed']
+        && participantsOk(data.participantIds)
+        && data.legs is int
+        && (data.legs == 1 || data.legs == 2)
+        && pointsOk(data.points)
+        && requiredTime(data.startDate)
+        && standingsOk(data)
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function sportFrozen() {
+      return areImmutableFieldsUnchanged([
+        'name', 'number', 'participantIds', 'legs', 'points', 'startDate', 'createdAt'
+      ]);
+    }
+
+    function snapshotFrozen() {
+      return areImmutableFieldsUnchanged(['endDate', 'championId', 'finalStandings']);
+    }
+
+    function activating(leagueId, seasonId) {
+      let beforeId = get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeasonId;
+      let afterId = getAfter(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeasonId;
+      return sportFrozen()
+        && snapshotFrozen()
+        && (beforeId == null || beforeId == seasonId)
+        && afterId == seasonId;
+    }
+
+    function completing() {
+      return sportFrozen();
+    }
+
+    function reopening(leagueId, seasonId) {
+      let beforeId = get(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeasonId;
+      let afterId = getAfter(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeasonId;
+      return sportFrozen()
+        && (beforeId == null || beforeId == seasonId)
+        && afterId == seasonId;
+    }
+
+    function validSeasonUpdate(leagueId, seasonId) {
+      let prev = resource.data.status;
+      let next = request.resource.data.status;
+      return (prev == 'draft' && next == 'draft')
+        || (prev == 'draft' && next == 'active' && activating(leagueId, seasonId))
+        || (prev == 'active' && next == 'active'
+            && areImmutableFieldsUnchanged([
+              'number', 'participantIds', 'legs', 'points', 'startDate', 'createdAt'
+            ])
+            && snapshotFrozen())
+        || (prev == 'active' && next == 'completed' && completing())
+        || (prev == 'completed' && next == 'active' && reopening(leagueId, seasonId))
+        || (prev == 'completed' && next == 'completed' && sportFrozen() && snapshotFrozen());
+    }
+
+    function activeSeasonPointerOk(leagueId) {
+      let nextId = request.resource.data.activeSeasonId;
+      let prevId = resource.data.activeSeasonId;
+      return nextId == prevId
+        || (nextId == null
+            && prevId is string
+            && seasonDataAfter(leagueId, prevId).status != 'active')
+        || (nextId is string
+            && nextId != prevId
+            && seasonDataAfter(leagueId, nextId).status == 'active'
+            && (prevId == null || seasonDataAfter(leagueId, prevId).status != 'active'));
+    }
+
+    function goalsOk(data) {
+      return data.status == 'played'
+        ? data.homeGoals is int
+          && intIn(data.homeGoals, 0, 99)
+          && data.awayGoals is int
+          && intIn(data.awayGoals, 0, 99)
+          && data.playedAt is timestamp
+          && data.playedAt >= timestamp.date(2020, 1, 1)
+          && data.playedAt <= request.time + duration.value(1, 'd')
+        : data.homeGoals == null
+          && data.awayGoals == null
+          && data.playedAt == null;
+    }
+
+    function textOk(value, maxLen) {
+      return value is string && value.size() <= maxLen;
+    }
+
+    function pairOk(pair, maxValue) {
+      return pair is map
+        && keysExact(pair, ['home', 'away'])
+        && intIn(pair.home, 0, maxValue)
+        && intIn(pair.away, 0, maxValue);
+    }
+
+    function validScorer(scorer) {
+      return scorer is map
+        && keysExact(scorer, ['side', 'name', 'minute'])
+        && scorer.side in ['home', 'away']
+        && stringBetween(scorer.name, 1, 40)
+        && intIn(scorer.minute, 0, 130);
+    }
+
+    function scorersOk(scorers) {
+      return scorers is list
+        && scorers.size() <= 12
+        && (scorers.size() < 1 || validScorer(scorers[0]))
+        && (scorers.size() < 2 || validScorer(scorers[1]))
+        && (scorers.size() < 3 || validScorer(scorers[2]))
+        && (scorers.size() < 4 || validScorer(scorers[3]))
+        && (scorers.size() < 5 || validScorer(scorers[4]))
+        && (scorers.size() < 6 || validScorer(scorers[5]))
+        && (scorers.size() < 7 || validScorer(scorers[6]))
+        && (scorers.size() < 8 || validScorer(scorers[7]))
+        && (scorers.size() < 9 || validScorer(scorers[8]))
+        && (scorers.size() < 10 || validScorer(scorers[9]))
+        && (scorers.size() < 11 || validScorer(scorers[10]))
+        && (scorers.size() < 12 || validScorer(scorers[11]));
+    }
+
+    function detailsOk(details) {
+      return details == null || (
+        details is map
+        && keysExact(details, [
+          'scorers', 'homeTeamUsed', 'awayTeamUsed', 'possession', 'shots',
+          'shotsOnTarget', 'motm', 'notes'
+        ])
+        && scorersOk(details.scorers)
+        && textOk(details.homeTeamUsed, 40)
+        && textOk(details.awayTeamUsed, 40)
+        && pairOk(details.possession, 100)
+        && pairOk(details.shots, 99)
+        && pairOk(details.shotsOnTarget, 99)
+        && textOk(details.motm, 40)
+        && textOk(details.notes, 500)
+      );
+    }
+
+    function isValidMatchShape(data, leagueId, seasonId) {
+      return keysExact(data, [
+          'leagueId', 'seasonId', 'matchday', 'homeId', 'awayId', 'playerIds',
+          'status', 'homeGoals', 'awayGoals', 'scheduledAt', 'playedAt', 'details',
+          'createdAt', 'updatedAt'
+        ])
+        && data.leagueId == leagueId
+        && data.seasonId == seasonId
+        && intIn(data.matchday, 1, 60)
+        && idOk(data.homeId)
+        && idOk(data.awayId)
+        && data.homeId != data.awayId
+        && data.playerIds is list
+        && data.playerIds.size() == 2
+        && data.playerIds[0] == data.homeId
+        && data.playerIds[1] == data.awayId
+        && data.status in ['scheduled', 'played', 'postponed', 'void']
+        && goalsOk(data)
+        && optionalTime(data.scheduledAt)
+        && detailsOk(data.details)
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function matchIdentityUnchanged() {
+      return areImmutableFieldsUnchanged([
+        'leagueId', 'seasonId', 'matchday', 'homeId', 'awayId', 'playerIds', 'createdAt'
+      ]);
+    }
+
+    function matchCreateOk(data, leagueId, seasonId) {
+      let season = seasonData(leagueId, seasonId);
+      return season.status in ['draft', 'active']
+        && isValidMatchShape(data, leagueId, seasonId)
+        && data.status == 'scheduled'
+        && data.homeGoals == null
+        && data.awayGoals == null
+        && data.playedAt == null
+        && data.details == null
+        && data.homeId in season.participantIds
+        && data.awayId in season.participantIds
+        && data.createdAt == request.time;
+    }
+
+    function matchUpdateOk(data, leagueId, seasonId) {
+      let season = seasonData(leagueId, seasonId);
+      return season.status in ['draft', 'active']
+        && isValidMatchShape(data, leagueId, seasonId)
+        && matchIdentityUnchanged();
+    }
+
+    // Collection-group reads (player career and all-league matches) must be
+    // covered for every matches collection, not only the nested path.
+    match /{path=**}/matches/{matchId} {
+      allow read: if true;
+    }
+
+    match /admins/{uid} {
+      allow get: if isOwner(uid);
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    match /leagues/{leagueId} {
+      allow read: if true;
+
+      allow create: if isAdmin()
+        && isValidLeague(request.resource.data)
+        && request.resource.data.activeSeasonId == null
+        && request.resource.data.createdAt == request.time
+        && uidUnchanged();
+
+      allow update: if isAdmin()
+        && isValidLeague(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && activeSeasonPointerOk(leagueId)
+        && uidUnchanged()
+        && uidNotModified();
+
+      allow delete: if isAdmin();
+
+      match /players/{playerId} {
+        allow read: if true;
+
+        allow create: if isAdmin()
+          && leagueExists(leagueId)
+          && isValidPlayer(request.resource.data)
+          && request.resource.data.createdAt == request.time
+          && uidUnchanged();
+
+        allow update: if isAdmin()
+          && leagueExists(leagueId)
+          && isValidPlayer(request.resource.data)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && uidUnchanged()
+          && uidNotModified();
+
+        // The app archives players who already have matches. Rules still allow
+        // an admin delete so a mistaken player with no history can be removed.
+        allow delete: if isAdmin();
+      }
+
+      match /seasons/{seasonId} {
+        allow read: if true;
+
+        allow create: if isAdmin()
+          && leagueExists(leagueId)
+          && isValidSeasonShape(request.resource.data)
+          && request.resource.data.status == 'draft'
+          && request.resource.data.createdAt == request.time
+          && uidUnchanged();
+
+        allow update: if isAdmin()
+          && leagueExists(leagueId)
+          && isValidSeasonShape(request.resource.data)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && validSeasonUpdate(leagueId, seasonId)
+          && uidUnchanged()
+          && uidNotModified();
+
+        allow delete: if isAdmin() && resource.data.status == 'draft';
+
+        match /matches/{matchId} {
+          allow read: if true;
+
+          allow create: if isAdmin()
+            && matchCreateOk(request.resource.data, leagueId, seasonId)
+            && uidUnchanged();
+
+          allow update: if isAdmin()
+            && matchUpdateOk(request.resource.data, leagueId, seasonId)
+            && request.resource.data.createdAt == resource.data.createdAt
+            && uidUnchanged()
+            && uidNotModified();
+
+          allow delete: if isAdmin()
+            && seasonData(leagueId, seasonId).status == 'draft';
+        }
+      }
+    }
+  }
+}
