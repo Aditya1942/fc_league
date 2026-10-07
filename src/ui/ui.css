@@ -410,6 +410,7 @@ button.chip {
 }
 
 .standings__scroll {
+  position: relative;
   overflow-x: auto;
   overflow-y: clip;
   border-radius: var(--radius-card);
@@ -439,7 +440,8 @@ button.chip {
 
 .standings th {
   position: sticky;
-  top: var(--topbar-offset);
+  /* The x-scroller is the sticky container, so a page offset would push the header into row 1. */
+  top: 0;
   z-index: 2;
   font-size: var(--text-xs);
   letter-spacing: 0.04em;

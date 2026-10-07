@@ -191,7 +191,9 @@ function HeadToHead({ match, home, away, standings, seasonMatches }) {
   )
   const homeRank = standings.find((row) => row.playerId === match.homeId)
   const awayRank = standings.find((row) => row.playerId === match.awayId)
-  const meetings = record.matches.filter((item) => item.status === 'played')
+  const meetings = record.matches.filter(
+    (item) => item.status === 'played' && !(item.id === match.id && item.seasonId === match.seasonId),
+  )
 
   if (history.loading) return <LoadingCards count={2} />
 
