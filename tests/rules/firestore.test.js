@@ -468,4 +468,44 @@ describe('firestore rules', () => {
       updatedAt: serverTimestamp(),
     }))
   }, 20000)
+  it('accepts a 100-write fixture batch', async () => {
+    const db = await seedDraft()
+    const batch = writeBatch(db)
+    for (let i = 0; i < 100; i += 1) {
+      batch.set(doc(db, `leagues/lg/seasons/s1/matches/b${i}`), scheduled())
+    }
+    await assertSucceeds(batch.commit())
+  }, 20000)
+
+  it('accepts a result with 12 scorers', async () => {
+    const db = await seedDraft()
+    const matchRef = doc(db, 'leagues/lg/seasons/s1/matches/m1')
+    await assertSucceeds(setDoc(matchRef, scheduled()))
+    const activate = writeBatch(db)
+    activate.update(doc(db, 'leagues/lg/seasons/s1'), { status: 'active', updatedAt: serverTimestamp() })
+    activate.update(doc(db, 'leagues/lg'), { activeSeasonId: 's1', updatedAt: serverTimestamp() })
+    await assertSucceeds(activate.commit())
+    const scorers = Array.from({ length: 12 }, (_, i) => ({
+      side: i % 2 ? 'away' : 'home',
+      name: `Scorer ${i}`,
+      minute: i * 10,
+    }))
+    await assertSucceeds(updateDoc(matchRef, {
+      status: 'played',
+      homeGoals: 6,
+      awayGoals: 6,
+      playedAt: serverTimestamp(),
+      details: {
+        scorers,
+        homeTeamUsed: 'Real Madrid',
+        awayTeamUsed: 'Arsenal',
+        possession: { home: 55, away: 45 },
+        shots: { home: 10, away: 9 },
+        shotsOnTarget: { home: 7, away: 6 },
+        motm: 'Scorer 0',
+        notes: 'Wild one',
+      },
+      updatedAt: serverTimestamp(),
+    }))
+  }, 20000)
 })

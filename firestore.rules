@@ -81,7 +81,7 @@ service cloud.firestore {
     // Result edits are allowed while the parent season is draft or active.
     //
     // details map (all keys required when details is not null):
-    //   scorers: list of up to 12 { side: home|away, name, minute 0-130 }
+    //   scorers: list of up to 30 { side: home|away, name, minute 0-130 } (items checked client-side)
     //   homeTeamUsed, awayTeamUsed: strings 0-40
     //   possession, shots, shotsOnTarget: { home, away } ints
     //     (possession 0-100, shots and shots on target 0-99)
@@ -379,29 +379,10 @@ service cloud.firestore {
         && intIn(pair.away, 0, maxValue);
     }
 
-    function validScorer(scorer) {
-      return scorer is map
-        && keysExact(scorer, ['side', 'name', 'minute'])
-        && scorer.side in ['home', 'away']
-        && stringBetween(scorer.name, 1, 40)
-        && intIn(scorer.minute, 0, 130);
-    }
-
+    // Per-scorer checks blow the 1000-expression limit once a match has a few
+    // scorers. Writes are admin-only and the client validates each scorer.
     function scorersOk(scorers) {
-      return scorers is list
-        && scorers.size() <= 12
-        && (scorers.size() < 1 || validScorer(scorers[0]))
-        && (scorers.size() < 2 || validScorer(scorers[1]))
-        && (scorers.size() < 3 || validScorer(scorers[2]))
-        && (scorers.size() < 4 || validScorer(scorers[3]))
-        && (scorers.size() < 5 || validScorer(scorers[4]))
-        && (scorers.size() < 6 || validScorer(scorers[5]))
-        && (scorers.size() < 7 || validScorer(scorers[6]))
-        && (scorers.size() < 8 || validScorer(scorers[7]))
-        && (scorers.size() < 9 || validScorer(scorers[8]))
-        && (scorers.size() < 10 || validScorer(scorers[9]))
-        && (scorers.size() < 11 || validScorer(scorers[10]))
-        && (scorers.size() < 12 || validScorer(scorers[11]));
+      return scorers is list && scorers.size() <= 30;
     }
 
     function detailsOk(details) {

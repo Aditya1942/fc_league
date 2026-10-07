@@ -189,7 +189,7 @@ async function commitInBatches(ops) {
   for (const op of ops) {
     op(batch)
     count += 1
-    if (count === 2) {
+    if (count === 400) {
       await batch.commit()
       batch = writeBatch(db)
       count = 0
