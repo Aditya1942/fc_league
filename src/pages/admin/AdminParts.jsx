@@ -47,14 +47,14 @@ export function AdminToast({ toast, onClose }) {
   )
 }
 
-export function ConfirmSheet({ open, title, message, confirmLabel = 'Confirm', danger = false, busy = false, onConfirm, onClose, children }) {
+export function ConfirmSheet({ open, title, message, confirmLabel = 'Confirm', danger = false, busy = false, confirmDisabled = false, onConfirm, onClose, children }) {
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       {message ? <p>{message}</p> : null}
       {children}
       <div className='admin-actions'>
         <ClayButton variant='soft' onClick={onClose} disabled={busy}>Cancel</ClayButton>
-        <ClayButton variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy}>
+        <ClayButton variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy || confirmDisabled}>
           {busy ? 'Working…' : confirmLabel}
         </ClayButton>
       </div>

@@ -8,12 +8,21 @@ import {
   replaceFixtures,
   reopenSeason,
   rescheduleMatch,
+  SEASON_EDITABLE,
+  updateSeason,
   useLeague,
   usePlayers,
   useSeason,
   useSeasonMatches,
 } from '../../data/index.js'
-import { computeStandings, currentMatchday, generateFixtures } from '../../engine/index.js'
+import {
+  computeStandings,
+  currentMatchday,
+  generateFixtures,
+  qualificationSpotsOf,
+  tableZones,
+} from '../../engine/index.js'
+import { seasonStandings } from '../../hooks/index.js'
 import {
   Chip,
   ClayButton,
@@ -37,11 +46,13 @@ import {
   byId,
   formatDate,
   formatDateTime,
+  fromDateInput,
   fromDateTimeInput,
   groupByMatchday,
   parseIntIn,
   STATUS_TONE,
   toDate,
+  toDateInput,
   toDateTimeInput,
 } from './format.js'
 import { useToast } from './useToast.js'
@@ -117,13 +128,100 @@ function MatchdayDate({ matchday, items, toast }) {
   )
 }
 
-function SeasonSummary({ season, playersById }) {
+function EditSeasonForm({ league, season, onDone, onError }) {
+  const fields = SEASON_EDITABLE[season.status] ?? []
+  const maxSpots = Math.max(1, (season.participantIds ?? []).length - 1)
+  const [name, setName] = useState(season.name ?? '')
+  const [startDate, setStartDate] = useState(() => toDateInput(season.startDate))
+  const [points, setPoints] = useState(() => ({
+    win: String(season.points?.win ?? 3),
+    draw: String(season.points?.draw ?? 1),
+    loss: String(season.points?.loss ?? 0),
+  }))
+  const [spots, setSpots] = useState(() => String(qualificationSpotsOf(season)))
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const setPoint = (key) => (event) => setPoints((prev) => ({ ...prev, [key]: event.target.value }))
+
+  const onSubmit = async (event) => {
+    event.preventDefault()
+    setError('')
+    let patch
+    try {
+      patch = { name, qualificationSpots: parseIntIn(spots, 1, maxSpots, 'Qualification spots') }
+      if (fields.includes('startDate')) {
+        const start = fromDateInput(startDate)
+        if (!start) throw new Error('Start date is required')
+        patch.startDate = start
+      }
+      if (fields.includes('points')) {
+        patch.points = {
+          win: parseIntIn(points.win, 0, 20, 'Win points'),
+          draw: parseIntIn(points.draw, 0, 20, 'Draw points'),
+          loss: parseIntIn(points.loss, 0, 20, 'Loss points'),
+        }
+      }
+    } catch (invalid) {
+      setError(invalid.message)
+      return
+    }
+    setBusy(true)
+    try {
+      await updateSeason(league.id, season.id, patch)
+      onDone('Season updated')
+    } catch (failure) {
+      setBusy(false)
+      onError(failure)
+    }
+  }
+
+  return (
+    <form className='admin-stack admin-stack--loose' onSubmit={onSubmit} noValidate>
+      <Field label='Name'>
+        <Input value={name} maxLength={60} required onChange={(event) => setName(event.target.value)} />
+      </Field>
+      {fields.includes('startDate') ? (
+        <Field label='Start date'>
+          <Input type='date' value={startDate} required onChange={(event) => setStartDate(event.target.value)} />
+        </Field>
+      ) : null}
+      {fields.includes('points') ? (
+        <div className='field'>
+          <span className='field__label'>Points</span>
+          <div className='admin-grid-3'>
+            <Field label='Win'>
+              <Input value={points.win} inputMode='numeric' onChange={setPoint('win')} />
+            </Field>
+            <Field label='Draw'>
+              <Input value={points.draw} inputMode='numeric' onChange={setPoint('draw')} />
+            </Field>
+            <Field label='Loss'>
+              <Input value={points.loss} inputMode='numeric' onChange={setPoint('loss')} />
+            </Field>
+          </div>
+        </div>
+      ) : null}
+      <Field label='Qualification spots' hint={`Top 1–${maxSpots} highlighted, counting 1st place`}>
+        <Input value={spots} inputMode='numeric' onChange={(event) => setSpots(event.target.value)} />
+      </Field>
+      {error ? <p className='admin-error' role='alert'>{error}</p> : null}
+      <ClayButton type='submit' size='lg' disabled={busy}>
+        {busy ? 'Saving…' : 'Save changes'}
+      </ClayButton>
+    </form>
+  )
+}
+
+function SeasonSummary({ season, playersById, onEdit }) {
   return (
     <ClayCard>
       <div className='admin-stack'>
         <div className='admin-row admin-row--between'>
           <p className='admin-list-item__name'>{season.name}</p>
-          <Chip tone={STATUS_TONE[season.status]}>{STATUS_LABEL[season.status] ?? season.status}</Chip>
+          <span className='admin-row'>
+            <Chip tone={STATUS_TONE[season.status]}>{STATUS_LABEL[season.status] ?? season.status}</Chip>
+            {onEdit ? <ClayButton variant='soft' size='sm' onClick={onEdit}>Edit</ClayButton> : null}
+          </span>
         </div>
         <p className='admin-muted'>
           Season {season.number} · {season.legs === 2 ? 'Home & away' : 'Single round'} · from {formatDate(season.startDate)}
@@ -131,6 +229,7 @@ function SeasonSummary({ season, playersById }) {
         <p className='admin-muted'>
           Points: win {season.points?.win ?? 3} · draw {season.points?.draw ?? 1} · loss {season.points?.loss ?? 0}
         </p>
+        <p className='admin-muted'>Qualification spots: {qualificationSpotsOf(season)}</p>
         <div className='admin-row'>
           {(season.participantIds ?? []).map((id) => {
             const player = playersById[id]
@@ -262,7 +361,7 @@ function DraftPanel({ league, season, matches, playersById, toast }) {
       <ConfirmSheet
         open={confirm === 'activate'}
         title='Start season?'
-        message={`${season.name} becomes the current season on Home. Participants, legs and points are locked once it starts.`}
+        message={`${season.name} becomes the current season on Home. Participants and legs are locked once it starts.`}
         confirmLabel='Start season'
         busy={busy === 'activate'}
         onConfirm={onActivate}
@@ -345,13 +444,21 @@ function AddMatchForm({ league, season, matches, playersById, onDone, onError })
 }
 
 function ActivePanel({ league, season, matches, players, playersById, toast }) {
+  const navigate = useNavigate()
   const [adding, setAdding] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [typed, setTyped] = useState('')
   const [confirm, setConfirm] = useState(false)
   const [voidOpen, setVoidOpen] = useState(true)
   const [busy, setBusy] = useState(false)
   const [picked, setPicked] = useState(null)
   const closeAdd = useCallback(() => setAdding(false), [])
   const closeConfirm = useCallback(() => setConfirm(false), [])
+  const closeDelete = useCallback(() => {
+    setDeleting(false)
+    setTyped('')
+  }, [])
 
   const names = useMemo(() => Object.fromEntries(players.map((player) => [player.id, player.name ?? ''])), [players])
   const standings = useMemo(
@@ -367,6 +474,18 @@ function ActivePanel({ league, season, matches, players, playersById, toast }) {
   const unplayed = matches.filter((match) => OPEN.includes(match.status))
   const played = matches.filter((match) => match.status === 'played').length
   const leader = standings[0] ? playersById[standings[0].playerId] : null
+
+  const onDelete = async () => {
+    setDeleteBusy(true)
+    try {
+      await deleteSeason(league.id, season.id)
+      toast.show(`${season.name} deleted`)
+      navigate('/admin/seasons', { replace: true })
+    } catch (error) {
+      setDeleteBusy(false)
+      toast.fail(error)
+    }
+  }
 
   const onComplete = async () => {
     setBusy(true)
@@ -432,6 +551,9 @@ function ActivePanel({ league, season, matches, players, playersById, toast }) {
           <IconTrophy />
           Complete season
         </ClayButton>
+        <ClayButton variant='danger' disabled={busy || deleteBusy} onClick={() => setDeleting(true)}>
+          Delete season
+        </ClayButton>
       </section>
 
       <Sheet open={adding} onClose={closeAdd} title='Add match'>
@@ -471,17 +593,34 @@ function ActivePanel({ league, season, matches, players, playersById, toast }) {
           </div>
         ) : null}
       </ConfirmSheet>
+
+      <ConfirmSheet
+        open={deleting}
+        title='Delete season?'
+        message={`${season.name}, its ${matches.length} matches and ${played} results will be deleted for good. Type the season name to confirm.`}
+        confirmLabel='Delete season'
+        danger
+        busy={deleteBusy}
+        confirmDisabled={typed.trim() !== season.name}
+        onConfirm={onDelete}
+        onClose={closeDelete}
+      >
+        <Field label='Season name'>
+          <Input value={typed} autoComplete='off' placeholder={season.name} onChange={(event) => setTyped(event.target.value)} />
+        </Field>
+      </ConfirmSheet>
     </>
   )
 }
 
-function CompletedPanel({ league, season, playersById, toast }) {
+function CompletedPanel({ league, season, matches, players, playersById, toast }) {
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const closeConfirm = useCallback(() => setConfirm(false), [])
   const champion = playersById[season.championId]
   const otherActive = league.activeSeasonId && league.activeSeasonId !== season.id
-  const rows = season.finalStandings ?? []
+  const names = useMemo(() => Object.fromEntries(players.map((player) => [player.id, player.name ?? ''])), [players])
+  const rows = useMemo(() => seasonStandings(season, matches, names), [season, matches, names])
 
   const onReopen = async () => {
     setBusy(true)
@@ -514,7 +653,7 @@ function CompletedPanel({ league, season, playersById, toast }) {
           <StandingsTable
             rows={rows}
             players={playersById}
-            zones={[{ id: 'champion', label: 'Champion', positions: [1] }]}
+            zones={tableZones(rows, season)}
           />
         </section>
       ) : null}
@@ -545,6 +684,8 @@ export default function SeasonAdmin() {
   const { data: players } = usePlayers(league?.id)
   const playersById = useMemo(() => byId(players), [players])
   const toast = useToast()
+  const [editing, setEditing] = useState(false)
+  const closeEdit = useCallback(() => setEditing(false), [])
   const loading = leagueLoading || seasonLoading || matchesLoading
 
   let body
@@ -561,10 +702,27 @@ export default function SeasonAdmin() {
     const props = { league, season, matches, players, playersById, toast }
     body = (
       <>
-        <SeasonSummary season={season} playersById={playersById} />
+        <SeasonSummary
+          season={season}
+          playersById={playersById}
+          onEdit={season.status === 'draft' ? null : () => setEditing(true)}
+        />
         {season.status === 'draft' ? <DraftPanel key={season.id} {...props} /> : null}
         {season.status === 'active' ? <ActivePanel key={season.id} {...props} /> : null}
         {season.status === 'completed' ? <CompletedPanel key={season.id} {...props} /> : null}
+        <Sheet open={editing} onClose={closeEdit} title='Edit season'>
+          {editing ? (
+            <EditSeasonForm
+              league={league}
+              season={season}
+              onError={toast.fail}
+              onDone={(message) => {
+                setEditing(false)
+                toast.show(message)
+              }}
+            />
+          ) : null}
+        </Sheet>
       </>
     )
   }

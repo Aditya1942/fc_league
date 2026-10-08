@@ -31,8 +31,10 @@ function CreateSeasonForm({ leagueId, players, nextNumber, onCreated, onError })
   const [participantIds, setParticipantIds] = useState(() => selectable.map((player) => player.id).slice(0, 12))
   const [legs, setLegs] = useState('1')
   const [points, setPoints] = useState({ win: '3', draw: '1', loss: '0' })
+  const [spots, setSpots] = useState('1')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const maxSpots = Math.max(1, participantIds.length - 1)
 
   const toggle = (id) => {
     setParticipantIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
@@ -59,6 +61,7 @@ function CreateSeasonForm({ leagueId, players, nextNumber, onCreated, onError })
           draw: parseIntIn(points.draw, 0, 20, 'Draw points'),
           loss: parseIntIn(points.loss, 0, 20, 'Loss points'),
         },
+        qualificationSpots: parseIntIn(spots, 1, maxSpots, 'Qualification spots'),
       }
     } catch (invalid) {
       setError(invalid.message)
@@ -134,6 +137,9 @@ function CreateSeasonForm({ leagueId, players, nextNumber, onCreated, onError })
           </Field>
         </div>
       </div>
+      <Field label='Qualification spots' hint={`Top 1–${maxSpots} highlighted, counting 1st place`}>
+        <Input value={spots} inputMode='numeric' onChange={(event) => setSpots(event.target.value)} />
+      </Field>
       {error ? <p className='admin-error' role='alert'>{error}</p> : null}
       <ClayButton type='submit' size='lg' disabled={busy || selectable.length < 2}>
         {busy ? 'Creating…' : 'Create draft'}
