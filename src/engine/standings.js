@@ -147,7 +147,7 @@ export function computeStandings(matches, participantIds, options = {}) {
 
   for (const [playerId, row] of rows) {
     const relevant = list.filter((match) => countsFor(match, playerId, venue))
-    row.form = computeForm(relevant, playerId, 5)
+    row.form = computeForm(relevant, playerId, 5, { seasonOrder: options?.seasonOrder })
   }
 
   return orderRows([...rows.values()], list, venue, rules, names)

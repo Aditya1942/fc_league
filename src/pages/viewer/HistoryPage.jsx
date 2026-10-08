@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useAllMatches } from '../../data/index.js'
-import { allTimeTable } from '../../engine/index.js'
+import { allTimeTable, seasonOrderOf } from '../../engine/index.js'
 import { podium, useLeagueData, useQueryParam, useSwipeTabs } from '../../hooks/index.js'
 import {
   Chip,
@@ -70,7 +70,7 @@ function AllTime({ leagueId, seasons, playersById, names }) {
   const all = useAllMatches(leagueId)
   const rows = useMemo(() => {
     const ids = new Set(seasons.filter((season) => season.status !== 'draft').map((season) => season.id))
-    return allTimeTable(all.data.filter((match) => ids.has(match.seasonId)), { names })
+    return allTimeTable(all.data.filter((match) => ids.has(match.seasonId)), { names, seasonOrder: seasonOrderOf(seasons) })
   }, [all.data, seasons, names])
 
   if (all.loading) return <LoadingCards count={1} height='320px' />

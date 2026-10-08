@@ -355,6 +355,16 @@ describe('allTimeTable', () => {
     expect(row(table, 'c')).toMatchObject({ position: 3, played: 0, points: 0 })
   })
 
+  it('orders all-time form by season number, then matchday', () => {
+    const matches = [
+      match({ seasonId: 's3', matchday: 5, homeId: 'a', awayId: 'b', homeGoals: 0, awayGoals: 1 }),
+      match({ seasonId: 's1', matchday: 22, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 0 }),
+    ]
+    const seasonOrder = seasonOrderOf([{ id: 's1', number: 1 }, { id: 's3', number: 3 }])
+
+    expect(row(allTimeTable(matches, { seasonOrder }), 'a').form).toEqual(['W', 'L'])
+  })
+
   it('accepts custom points, venue, and a names map', () => {
     const matches = [
       match({ homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 1 }),
