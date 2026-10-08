@@ -301,20 +301,28 @@ service cloud.firestore {
             && data.qualificationSpots < data.participantIds.size());
     }
 
-    function isValidSeasonShape(data) {
+    // Fields every season write must satisfy. Participants and the standings
+    // snapshot are checked only by the transitions that can change them: checking
+    // them on every update blows the 1000-expression limit for larger seasons.
+    function seasonFieldsOk(data) {
       return seasonKeysOk(data)
         && stringBetween(data.name, 1, 60)
         && intIn(data.number, 1, 999)
         && data.status in ['draft', 'active', 'completed']
-        && participantsOk(data.participantIds)
+        && data.participantIds is list
         && qualificationOk(data)
         && data.legs is int
         && (data.legs == 1 || data.legs == 2)
         && pointsOk(data.points)
         && requiredTime(data.startDate)
-        && standingsOk(data)
         && data.createdAt is timestamp
         && data.updatedAt == request.time;
+    }
+
+    function isValidSeasonShape(data) {
+      return seasonFieldsOk(data)
+        && participantsOk(data.participantIds)
+        && standingsOk(data);
     }
 
     function sportFrozen() {
@@ -351,18 +359,19 @@ service cloud.firestore {
     function validSeasonUpdate(leagueId, seasonId) {
       let prev = resource.data.status;
       let next = request.resource.data.status;
-      return (prev == 'draft' && next == 'draft')
+      let data = request.resource.data;
+      return (prev == 'draft' && next == 'draft'
+            && participantsOk(data.participantIds)
+            && standingsOk(data))
         || (prev == 'draft' && next == 'active' && activating(leagueId, seasonId))
         || (prev == 'active' && next == 'active'
-            && areImmutableFieldsUnchanged(['number', 'participantIds', 'legs', 'createdAt'])
-            && snapshotFrozen())
-        || (prev == 'active' && next == 'completed' && completing())
-        || (prev == 'completed' && next == 'active' && reopening(leagueId, seasonId))
-        || (prev == 'completed' && next == 'completed'
             && areImmutableFieldsUnchanged([
-              'number', 'participantIds', 'legs', 'points', 'startDate', 'createdAt'
-            ])
-            && snapshotFrozen());
+              'number', 'participantIds', 'legs', 'createdAt', 'endDate', 'championId', 'finalStandings'
+            ]))
+        || (prev == 'active' && next == 'completed' && completing() && completedSnapshot(data))
+        || (prev == 'completed' && next == 'active' && reopening(leagueId, seasonId) && standingsOk(data))
+        || (prev == 'completed' && next == 'completed'
+            && data.diff(resource.data).affectedKeys().hasOnly(['name', 'qualificationSpots', 'updatedAt']));
     }
 
     function inactiveAfter(leagueId, seasonId) {
@@ -546,7 +555,7 @@ service cloud.firestore {
 
         allow update: if isAdmin()
           && leagueExists(leagueId)
-          && isValidSeasonShape(request.resource.data)
+          && seasonFieldsOk(request.resource.data)
           && request.resource.data.createdAt == resource.data.createdAt
           && validSeasonUpdate(leagueId, seasonId)
           && uidUnchanged()

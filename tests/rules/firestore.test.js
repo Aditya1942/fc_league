@@ -469,14 +469,14 @@ describe('firestore rules', () => {
     const finalStandings = ids.map((playerId, index) => standing({
       playerId,
       position: index + 1,
-      played: index === 0 ? 1 : 0,
-      won: index === 0 ? 1 : 0,
-      drawn: 0,
-      lost: 0,
-      goalsFor: index === 0 ? 1 : 0,
-      goalsAgainst: 0,
-      points: index === 0 ? 3 : 0,
-      form: index === 0 ? ['W'] : [],
+      played: 10,
+      won: 5,
+      drawn: 3,
+      lost: 2,
+      goalsFor: 12,
+      goalsAgainst: 8,
+      points: 18,
+      form: ['W', 'D', 'L', 'W', 'W'],
     }))
     await assertSucceeds(updateDoc(doc(db, 'leagues/lg/seasons/s1'), {
       status: 'completed',
@@ -487,6 +487,11 @@ describe('firestore rules', () => {
     }))
     await assertSucceeds(updateDoc(doc(db, 'leagues/lg'), {
       activeSeasonId: null,
+      updatedAt: serverTimestamp(),
+    }))
+    await assertSucceeds(updateDoc(doc(db, 'leagues/lg/seasons/s1'), {
+      name: 'Season One',
+      qualificationSpots: 4,
       updatedAt: serverTimestamp(),
     }))
   }, 20000)
@@ -616,4 +621,52 @@ describe('firestore rules', () => {
     expect((await getDoc(doc(db, 'leagues/lg'))).data().activeSeasonId).toBe(null)
     expect((await getDoc(doc(db, 'leagues/lg/seasons/s1'))).exists()).toBe(false)
   }, 30000)
+
+  it('completes and then renames a full twelve-player season within the expression limit', async () => {
+    await grantAdmin(ADMIN_ID)
+    const ids = Array.from({ length: 12 }, (_, index) => `player-${index + 1}-with-a-long-id`)
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = dbOf(context)
+      await setDoc(doc(db, 'leagues/lg'), {
+        name: 'FC League',
+        emoji: '⚽',
+        color: '#C5D4FF',
+        activeSeasonId: 's1',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      })
+      await setDoc(doc(db, 'leagues/lg/seasons/s1'), {
+        ...seasonDoc({ name: 'Season 1', number: 1, participantIds: ids, legs: 2, startDate: START }),
+        status: 'active',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      })
+    })
+    const db = dbOf(testEnv.authenticatedContext(ADMIN_ID))
+    const seasonRef = doc(db, 'leagues/lg/seasons/s1')
+    await assertSucceeds(updateDoc(seasonRef, {
+      status: 'completed',
+      championId: ids[0],
+      finalStandings: ids.map((playerId, index) => standing({
+        playerId,
+        position: index + 1,
+        played: 22,
+        won: 10,
+        drawn: 6,
+        lost: 6,
+        goalsFor: 40,
+        goalsAgainst: 30,
+        points: 36,
+        form: ['W', 'D', 'L', 'W', 'W'],
+      })),
+      endDate: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }))
+    await assertSucceeds(updateDoc(seasonRef, {
+      name: 'Season One',
+      qualificationSpots: 11,
+      updatedAt: serverTimestamp(),
+    }))
+    await assertFails(updateDoc(seasonRef, { championId: ids[1], updatedAt: serverTimestamp() }))
+  }, 20000)
 })
