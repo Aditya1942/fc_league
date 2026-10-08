@@ -40,7 +40,7 @@ export function seasonStandings(season, matches, names = {}, venue = 'all') {
         goalsFor,
         goalsAgainst,
         goalDiff: row.goalDiff ?? goalsFor - goalsAgainst,
-        form: Array.isArray(row.form) && row.form.length ? row.form : computed.form ?? [],
+        form: computed.form ?? [],
       }
     })
 }

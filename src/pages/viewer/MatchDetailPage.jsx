@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Link, useParams } from 'react-router'
 import { useAuth } from '../../auth/index.js'
 import { useMatch, usePlayerMatches } from '../../data/index.js'
-import { computeForm, headToHead } from '../../engine/index.js'
+import { compareFormOrder, computeForm, headToHead } from '../../engine/index.js'
 import { useLeagueData, useQueryParam, useSeasonData, useSwipeTabs } from '../../hooks/index.js'
 import {
   Chip,
@@ -20,7 +20,7 @@ import { LoadingCards } from './components/LoadingCards.jsx'
 import { MatchList } from './components/MatchList.jsx'
 import { Section } from './components/Section.jsx'
 import { StatGrid } from './components/StatGrid.jsx'
-import { clubName, formatDateTime, matchDate, matchMillis, ordinal } from './format.js'
+import { clubName, formatDateTime, matchDate, ordinal } from './format.js'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -38,10 +38,7 @@ const STATUS = {
 
 function playedBefore(candidate, match) {
   if (candidate.id === match.id || candidate.status !== 'played') return false
-  const left = matchMillis(candidate)
-  const right = matchMillis(match)
-  if (left != null && right != null && left !== right) return left < right
-  return (candidate.matchday ?? 0) < (match.matchday ?? 0)
+  return compareFormOrder({ match: candidate, index: 0 }, { match, index: 1 }) < 0
 }
 
 function ScoreSide({ player, playerId }) {

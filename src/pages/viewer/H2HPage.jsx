@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { usePlayerMatches } from '../../data/index.js'
-import { computeForm, headToHead } from '../../engine/index.js'
+import { computeForm, headToHead, seasonOrderOf } from '../../engine/index.js'
 import { useLeagueData, useQueryParam } from '../../hooks/index.js'
 import {
   ClayCard,
@@ -29,6 +29,7 @@ function Comparison({ aId, bId }) {
     return history.data.filter((match) => ids.has(match.seasonId))
   }, [history.data, seasons])
   const record = useMemo(() => headToHead(matches, aId, bId), [matches, aId, bId])
+  const seasonOrder = useMemo(() => seasonOrderOf(seasons), [seasons])
   const meetings = record.matches.filter((match) => match.status === 'played')
 
   if (history.loading) return <LoadingCards count={2} />
@@ -63,11 +64,11 @@ function Comparison({ aId, bId }) {
             <ul className='v-list'>
               <li className='v-list__item'>
                 <span>{clubName(playerA)}</span>
-                <FormChips form={computeForm(meetings, aId, 5)} label={`${clubName(playerA)} in this fixture`} />
+                <FormChips form={computeForm(meetings, aId, 5, { seasonOrder })} label={`${clubName(playerA)} in this fixture`} />
               </li>
               <li className='v-list__item'>
                 <span>{clubName(playerB)}</span>
-                <FormChips form={computeForm(meetings, bId, 5)} label={`${clubName(playerB)} in this fixture`} />
+                <FormChips form={computeForm(meetings, bId, 5, { seasonOrder })} label={`${clubName(playerB)} in this fixture`} />
               </li>
             </ul>
           </ClayCard>
