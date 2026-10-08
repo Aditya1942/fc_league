@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allTimeTable, computeForm, computeStandings } from './index.js'
+import { allTimeTable, computeForm, computeStandings, seasonOrderOf } from './index.js'
 
 function match(overrides) {
   return {
@@ -46,7 +46,7 @@ describe('computeStandings', () => {
       goalsAgainst: 1,
       goalDiff: 2,
       points: 4,
-      form: ['D', 'W'],
+      form: ['W', 'D'],
     })
     expect(row(table, 'c')).toMatchObject({
       position: 2,
@@ -217,7 +217,7 @@ describe('computeStandings', () => {
       goalsAgainst: 2,
       goalDiff: 1,
       points: 3,
-      form: ['L', 'W'],
+      form: ['W', 'L'],
     })
     expect(row(home, 'b')).toMatchObject({
       played: 1,
@@ -272,59 +272,54 @@ describe('computeStandings', () => {
 })
 
 describe('computeForm', () => {
-  it('returns the last n results, newest first, for that player only', () => {
+  it('returns the last n results, oldest first and newest last, for that player only', () => {
     const matches = [
-      match({ id: 'old', homeId: 'a', awayId: 'b', homeGoals: 0, awayGoals: 1, playedAt: 1000 }),
-      match({ id: 'w', homeId: 'c', awayId: 'a', homeGoals: 0, awayGoals: 2, playedAt: 2000 }),
-      match({ id: 'd', homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 1, playedAt: 3000 }),
-      match({ id: 'l', homeId: 'b', awayId: 'a', homeGoals: 3, awayGoals: 0, playedAt: 4000 }),
-      match({ id: 'other', homeId: 'b', awayId: 'c', homeGoals: 5, awayGoals: 0, playedAt: 5000 }),
-      match({ id: 'skip', homeId: 'a', awayId: 'c', homeGoals: 4, awayGoals: 0, status: 'void', playedAt: 6000 }),
-      match({ id: 'new', homeId: 'a', awayId: 'c', homeGoals: 1, awayGoals: 0, playedAt: 7000 }),
+      match({ id: 'old', matchday: 1, homeId: 'a', awayId: 'b', homeGoals: 0, awayGoals: 1 }),
+      match({ id: 'w', matchday: 2, homeId: 'c', awayId: 'a', homeGoals: 0, awayGoals: 2 }),
+      match({ id: 'd', matchday: 3, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 1 }),
+      match({ id: 'l', matchday: 4, homeId: 'b', awayId: 'a', homeGoals: 3, awayGoals: 0 }),
+      match({ id: 'other', matchday: 5, homeId: 'b', awayId: 'c', homeGoals: 5, awayGoals: 0 }),
+      match({ id: 'skip', matchday: 6, homeId: 'a', awayId: 'c', homeGoals: 4, awayGoals: 0, status: 'void' }),
+      match({ id: 'new', matchday: 7, homeId: 'a', awayId: 'c', homeGoals: 1, awayGoals: 0 }),
+      match({ id: 'first', matchday: 0, homeId: 'a', awayId: 'c', homeGoals: 2, awayGoals: 0 }),
     ]
 
-    expect(computeForm(matches, 'a')).toEqual(['W', 'L', 'D', 'W', 'L'])
-    expect(computeForm(matches, 'a', 2)).toEqual(['W', 'L'])
+    expect(computeForm(matches, 'a')).toEqual(['L', 'W', 'D', 'L', 'W'])
+    expect(computeForm(matches, 'a', 2)).toEqual(['L', 'W'])
     expect(computeForm(matches, 'a', 0)).toEqual([])
     expect(computeForm(matches, 'z')).toEqual([])
   })
 
-  it('orders Date, millis, and Timestamp-like kickoffs, not array order', () => {
+  it('orders by matchday even when results were saved out of order', () => {
     const matches = [
-      match({
-        homeId: 'a',
-        awayId: 'b',
-        homeGoals: 0,
-        awayGoals: 1,
-        playedAt: 3000,
-      }),
-      match({
-        homeId: 'a',
-        awayId: 'b',
-        homeGoals: 1,
-        awayGoals: 0,
-        playedAt: { toDate: () => new Date(1000) },
-      }),
-      match({
-        homeId: 'a',
-        awayId: 'b',
-        homeGoals: 1,
-        awayGoals: 1,
-        playedAt: new Date(2000),
-      }),
+      match({ matchday: 5, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 0, playedAt: 1000 }),
+      match({ matchday: 3, homeId: 'a', awayId: 'b', homeGoals: 0, awayGoals: 1, playedAt: 9000 }),
+      match({ matchday: 4, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 1, playedAt: 5000 }),
     ]
 
     expect(computeForm(matches, 'a')).toEqual(['L', 'D', 'W'])
   })
 
-  it('falls back to matchday then input order when dates are missing', () => {
+  it('breaks a shared matchday by playedAt (Date, millis, Timestamp-like), then input order', () => {
     const matches = [
-      match({ matchday: 1, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 0 }),
-      match({ matchday: 2, homeId: 'a', awayId: 'b', homeGoals: 0, awayGoals: 0 }),
-      match({ matchday: 2, homeId: 'b', awayId: 'a', homeGoals: 0, awayGoals: 1 }),
+      match({ matchday: 2, homeId: 'a', awayId: 'b', homeGoals: 0, awayGoals: 1, playedAt: 3000 }),
+      match({ matchday: 2, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 0, playedAt: { toDate: () => new Date(1000) } }),
+      match({ matchday: 2, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 1, playedAt: new Date(2000) }),
+      match({ matchday: 2, homeId: 'b', awayId: 'a', homeGoals: 0, awayGoals: 1, playedAt: null }),
+      match({ matchday: 2, homeId: 'b', awayId: 'a', homeGoals: 2, awayGoals: 1, playedAt: null }),
     ]
 
-    expect(computeForm(matches, 'a')).toEqual(['W', 'D', 'W'])
+    expect(computeForm(matches, 'a')).toEqual(['W', 'D', 'L', 'W', 'L'])
+  })
+
+  it('orders across seasons by season number when given a season order', () => {
+    const seasonOrder = seasonOrderOf([{ id: 'later', number: 2 }, { id: 'earlier', number: 1 }])
+    const matches = [
+      match({ seasonId: 'later', matchday: 1, homeId: 'a', awayId: 'b', homeGoals: 1, awayGoals: 0 }),
+      match({ seasonId: 'earlier', matchday: 9, homeId: 'a', awayId: 'b', homeGoals: 0, awayGoals: 1 }),
+    ]
+
+    expect(computeForm(matches, 'a', 5, { seasonOrder })).toEqual(['L', 'W'])
   })
 })
 
@@ -347,7 +342,7 @@ describe('allTimeTable', () => {
       goalsAgainst: 1,
       goalDiff: 1,
       points: 4,
-      form: ['D', 'W'],
+      form: ['W', 'D'],
     })
     expect(row(table, 'b')).toMatchObject({
       position: 2,

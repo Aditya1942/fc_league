@@ -1,7 +1,7 @@
 import {
   compareIds,
   compareNames,
-  compareOldest,
+  compareFormOrder,
   isPlayed,
   pointsFor,
   resultOf,
@@ -104,8 +104,14 @@ function orderRows(rows, matches, venue, rules, names) {
   return ordered.map((row, position) => ({ ...row, position: position + 1 }))
 }
 
-export function computeForm(matches, playerId, n = 5) {
+export function seasonOrderOf(seasons) {
+  return new Map((seasons ?? []).map((season, index) => [season.id, season.number ?? index]))
+}
+
+export function computeForm(matches, playerId, n = 5, options = {}) {
   const limit = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 5
+  if (limit === 0) return []
+  const seasonOrder = options?.seasonOrder
   const played = []
   const list = Array.isArray(matches) ? matches : []
   list.forEach((match, index) => {
@@ -113,8 +119,8 @@ export function computeForm(matches, playerId, n = 5) {
     if (match.homeId !== playerId && match.awayId !== playerId) return
     played.push({ match, index })
   })
-  played.sort((a, b) => compareOldest(b, a))
-  return played.slice(0, limit).map(({ match }) => resultOf(match, playerId))
+  played.sort((a, b) => compareFormOrder(a, b, seasonOrder))
+  return played.slice(-limit).map(({ match }) => resultOf(match, playerId))
 }
 
 export function computeStandings(matches, participantIds, options = {}) {

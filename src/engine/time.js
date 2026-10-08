@@ -43,6 +43,21 @@ export function compareOldest(a, b) {
   return a.index - b.index
 }
 
+export function compareFormOrder(a, b, seasonOrder) {
+  const leftSeason = seasonOrder?.get(a.match.seasonId) ?? 0
+  const rightSeason = seasonOrder?.get(b.match.seasonId) ?? 0
+  if (leftSeason !== rightSeason) return leftSeason - rightSeason
+  const leftDay = a.match.matchday ?? 0
+  const rightDay = b.match.matchday ?? 0
+  if (leftDay !== rightDay) return leftDay - rightDay
+  const left = toMillis(a.match.playedAt)
+  const right = toMillis(b.match.playedAt)
+  if (left != null && right != null && left !== right) return left - right
+  if (left != null && right == null) return -1
+  if (left == null && right != null) return 1
+  return a.index - b.index
+}
+
 export function resultOf(match, playerId) {
   const goalsFor = match.homeId === playerId ? match.homeGoals : match.awayGoals
   const goalsAgainst = match.homeId === playerId ? match.awayGoals : match.homeGoals
