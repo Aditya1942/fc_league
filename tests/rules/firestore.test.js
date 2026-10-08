@@ -103,6 +103,28 @@ function standing(row) {
   }
 }
 
+async function activateS1(db) {
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'leagues/lg/seasons/s1'), { status: 'active', updatedAt: serverTimestamp() })
+  batch.update(doc(db, 'leagues/lg'), { activeSeasonId: 's1', updatedAt: serverTimestamp() })
+  await assertSucceeds(batch.commit())
+}
+
+function emptyStandings() {
+  return ['p1', 'p2'].map((playerId, index) => standing({
+    playerId,
+    position: index + 1,
+    played: 0,
+    won: 0,
+    drawn: 0,
+    lost: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+    points: 0,
+    form: [],
+  }))
+}
+
 describe('firestore rules', () => {
   beforeAll(async () => {
     const rulesPath = join(dirname(fileURLToPath(import.meta.url)), '../../firestore.rules')
@@ -508,4 +530,90 @@ describe('firestore rules', () => {
       updatedAt: serverTimestamp(),
     }))
   }, 20000)
+
+  it('validates qualification spots and still accepts seasons without them', async () => {
+    const db = await seedDraft()
+    const base = { name: 'Season 3', number: 3, participantIds: ['p1', 'p2'], startDate: START }
+    await assertFails(setDoc(doc(db, 'leagues/lg/seasons/s3'), seasonDoc({ ...base, qualificationSpots: 2 })))
+    await assertFails(setDoc(doc(db, 'leagues/lg/seasons/s3'), seasonDoc({ ...base, qualificationSpots: 0 })))
+    await assertSucceeds(setDoc(doc(db, 'leagues/lg/seasons/s3'), seasonDoc({ ...base, qualificationSpots: 1 })))
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const legacy = { ...seasonDoc(base), createdAt: Timestamp.now(), updatedAt: Timestamp.now() }
+      delete legacy.qualificationSpots
+      await setDoc(doc(dbOf(context), 'leagues/lg/seasons/legacy'), legacy)
+    })
+    await assertSucceeds(updateDoc(doc(db, 'leagues/lg/seasons/legacy'), {
+      name: 'Legacy renamed',
+      updatedAt: serverTimestamp(),
+    }))
+  }, 20000)
+
+  it('edits an active season name, points, start date, and spots but not its setup', async () => {
+    const db = await seedDraft()
+    await activateS1(db)
+    const seasonRef = doc(db, 'leagues/lg/seasons/s1')
+    await assertSucceeds(updateDoc(seasonRef, {
+      name: 'Renamed',
+      points: { win: 2, draw: 1, loss: 0 },
+      startDate: Timestamp.fromDate(new Date('2026-02-01T00:00:00Z')),
+      qualificationSpots: 1,
+      updatedAt: serverTimestamp(),
+    }))
+    await assertFails(updateDoc(seasonRef, { qualificationSpots: 2, updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(seasonRef, { legs: 2, updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(seasonRef, { participantIds: ['p2', 'p1'], updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(seasonRef, { number: 5, updatedAt: serverTimestamp() }))
+  }, 20000)
+
+  it('edits only the name and spots of a completed season and never deletes it', async () => {
+    const db = await seedDraft()
+    await activateS1(db)
+    const seasonRef = doc(db, 'leagues/lg/seasons/s1')
+    await assertSucceeds(updateDoc(seasonRef, {
+      status: 'completed',
+      championId: 'p1',
+      finalStandings: emptyStandings(),
+      endDate: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }))
+    await assertSucceeds(updateDoc(doc(db, 'leagues/lg'), { activeSeasonId: null, updatedAt: serverTimestamp() }))
+
+    await assertSucceeds(updateDoc(seasonRef, { name: 'Season One', qualificationSpots: 1, updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(seasonRef, { points: { win: 2, draw: 1, loss: 0 }, updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(seasonRef, {
+      startDate: Timestamp.fromDate(new Date('2026-02-01T00:00:00Z')),
+      updatedAt: serverTimestamp(),
+    }))
+    await assertFails(deleteDoc(seasonRef))
+  }, 20000)
+
+  it('deletes an active season and its 40 matches only in one batch that clears the pointer', async () => {
+    const db = await seedDraft()
+    const ids = Array.from({ length: 40 }, (_, index) => `m${index + 1}`)
+    const seed = writeBatch(db)
+    ids.forEach((id) => seed.set(doc(db, `leagues/lg/seasons/s1/matches/${id}`), scheduled()))
+    await assertSucceeds(seed.commit())
+    await activateS1(db)
+    await assertSucceeds(updateDoc(doc(db, 'leagues/lg/seasons/s1/matches/m1'), {
+      status: 'played',
+      homeGoals: 1,
+      awayGoals: 0,
+      playedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }))
+
+    await assertFails(deleteDoc(doc(db, 'leagues/lg/seasons/s1/matches/m1')))
+    await assertFails(deleteDoc(doc(db, 'leagues/lg/seasons/s1')))
+    await assertFails(updateDoc(doc(db, 'leagues/lg'), { activeSeasonId: null, updatedAt: serverTimestamp() }))
+
+    const wipe = writeBatch(db)
+    ids.forEach((id) => wipe.delete(doc(db, `leagues/lg/seasons/s1/matches/${id}`)))
+    wipe.delete(doc(db, 'leagues/lg/seasons/s1'))
+    wipe.update(doc(db, 'leagues/lg'), { activeSeasonId: null, updatedAt: serverTimestamp() })
+    await assertSucceeds(wipe.commit())
+
+    expect((await getDoc(doc(db, 'leagues/lg'))).data().activeSeasonId).toBe(null)
+    expect((await getDoc(doc(db, 'leagues/lg/seasons/s1'))).exists()).toBe(false)
+  }, 30000)
 })

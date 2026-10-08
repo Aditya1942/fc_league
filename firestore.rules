@@ -47,6 +47,7 @@ service cloud.firestore {
     //   - participantIds: list of 2-12 unique player ids
     //   - legs: int (required, 1 or 2)
     //   - points: map { win, draw, loss } ints 0-20
+    //   - qualificationSpots: int, optional (1 to participants - 1; absent means 1)
     //   - startDate: timestamp (required, 2020-01-01 through 800 days ahead)
     //   - endDate: timestamp or null (null unless completed)
     //   - championId: string or null (null unless completed; a participant)
@@ -61,7 +62,10 @@ service cloud.firestore {
     // completed→completed, completed→active (reopen).
     // Activating or reopening sets leagues.activeSeasonId in the same batch.
     // Completing the current season clears activeSeasonId in the same batch.
-    // Setup fields freeze once the season leaves draft.
+    // Active seasons may change name, points, startDate, qualificationSpots.
+    // Completed seasons may change name and qualificationSpots only.
+    // Draft seasons can be deleted. Active seasons can be deleted only in one
+    // batch that also deletes their matches and clears leagues.activeSeasonId.
     //
     // Collection: leagues/{leagueId}/seasons/{seasonId}/matches
     // Fields:
@@ -77,7 +81,8 @@ service cloud.firestore {
     //   - createdAt / updatedAt
     //
     // Creates are scheduled with null goals, playedAt, and details.
-    // Deletes are allowed only while the parent season is draft.
+    // Deletes are allowed while the parent season is draft, or in the batch
+    // that deletes the parent season.
     // Result edits are allowed while the parent season is draft or active.
     //
     // details map (all keys required when details is not null):
@@ -277,15 +282,32 @@ service cloud.firestore {
         && data.updatedAt == request.time;
     }
 
-    function isValidSeasonShape(data) {
-      return keysExact(data, [
-          'name', 'number', 'status', 'participantIds', 'legs', 'points',
+    function seasonKeysOk(data) {
+      return data.keys().hasOnly([
+          'name', 'number', 'status', 'participantIds', 'legs', 'points', 'qualificationSpots',
           'startDate', 'endDate', 'championId', 'finalStandings', 'createdAt', 'updatedAt'
         ])
+        && data.keys().hasAll([
+          'name', 'number', 'status', 'participantIds', 'legs', 'points',
+          'startDate', 'endDate', 'championId', 'finalStandings', 'createdAt', 'updatedAt'
+        ]);
+    }
+
+    // Seasons created before qualification zones have no field; the app reads that as 1.
+    function qualificationOk(data) {
+      return !('qualificationSpots' in data)
+        || (data.qualificationSpots is int
+            && data.qualificationSpots >= 1
+            && data.qualificationSpots < data.participantIds.size());
+    }
+
+    function isValidSeasonShape(data) {
+      return seasonKeysOk(data)
         && stringBetween(data.name, 1, 60)
         && intIn(data.number, 1, 999)
         && data.status in ['draft', 'active', 'completed']
         && participantsOk(data.participantIds)
+        && qualificationOk(data)
         && data.legs is int
         && (data.legs == 1 || data.legs == 2)
         && pointsOk(data.points)
@@ -332,13 +354,20 @@ service cloud.firestore {
       return (prev == 'draft' && next == 'draft')
         || (prev == 'draft' && next == 'active' && activating(leagueId, seasonId))
         || (prev == 'active' && next == 'active'
-            && areImmutableFieldsUnchanged([
-              'number', 'participantIds', 'legs', 'points', 'startDate', 'createdAt'
-            ])
+            && areImmutableFieldsUnchanged(['number', 'participantIds', 'legs', 'createdAt'])
             && snapshotFrozen())
         || (prev == 'active' && next == 'completed' && completing())
         || (prev == 'completed' && next == 'active' && reopening(leagueId, seasonId))
-        || (prev == 'completed' && next == 'completed' && sportFrozen() && snapshotFrozen());
+        || (prev == 'completed' && next == 'completed'
+            && areImmutableFieldsUnchanged([
+              'number', 'participantIds', 'legs', 'points', 'startDate', 'createdAt'
+            ])
+            && snapshotFrozen());
+    }
+
+    function inactiveAfter(leagueId, seasonId) {
+      return !existsAfter(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId))
+        || seasonDataAfter(leagueId, seasonId).status != 'active';
     }
 
     function activeSeasonPointerOk(leagueId) {
@@ -347,11 +376,11 @@ service cloud.firestore {
       return nextId == prevId
         || (nextId == null
             && prevId is string
-            && seasonDataAfter(leagueId, prevId).status != 'active')
+            && inactiveAfter(leagueId, prevId))
         || (nextId is string
             && nextId != prevId
             && seasonDataAfter(leagueId, nextId).status == 'active'
-            && (prevId == null || seasonDataAfter(leagueId, prevId).status != 'active'));
+            && (prevId == null || inactiveAfter(leagueId, prevId)));
     }
 
     function goalsOk(data) {
@@ -523,7 +552,11 @@ service cloud.firestore {
           && uidUnchanged()
           && uidNotModified();
 
-        allow delete: if isAdmin() && resource.data.status == 'draft';
+        // An active season can only go in the batch that clears the league's pointer to it.
+        allow delete: if isAdmin()
+          && (resource.data.status == 'draft'
+              || (resource.data.status == 'active'
+                  && getAfter(/databases/$(database)/documents/leagues/$(leagueId)).data.activeSeasonId != seasonId));
 
         match /matches/{matchId} {
           allow read: if true;
@@ -539,7 +572,8 @@ service cloud.firestore {
             && uidNotModified();
 
           allow delete: if isAdmin()
-            && seasonData(leagueId, seasonId).status == 'draft';
+            && (!existsAfter(/databases/$(database)/documents/leagues/$(leagueId)/seasons/$(seasonId))
+                || seasonData(leagueId, seasonId).status == 'draft');
         }
       }
     }

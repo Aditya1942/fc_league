@@ -31,6 +31,7 @@ export function seasonDoc({
   legs = 1,
   points = { win: 3, draw: 1, loss: 0 },
   startDate,
+  qualificationSpots = 1,
 }) {
   return {
     name,
@@ -39,6 +40,7 @@ export function seasonDoc({
     participantIds,
     legs,
     points,
+    qualificationSpots,
     startDate,
     endDate: null,
     championId: null,
