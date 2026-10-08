@@ -4,7 +4,7 @@ import {
   activateSeason,
   addMatch,
   completeSeason,
-  deleteDraftSeason,
+  deleteSeason,
   replaceFixtures,
   reopenSeason,
   rescheduleMatch,
@@ -194,7 +194,7 @@ function DraftPanel({ league, season, matches, playersById, toast }) {
   }
 
   const onDelete = async () => {
-    const ok = await run('delete', () => deleteDraftSeason(league.id, season.id), 'Draft deleted')
+    const ok = await run('delete', () => deleteSeason(league.id, season.id), 'Draft deleted')
     if (ok) navigate('/admin/seasons', { replace: true })
   }
 

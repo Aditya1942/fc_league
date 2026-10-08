@@ -21,10 +21,12 @@ export {
   activateSeason,
   completeSeason,
   reopenSeason,
-  deleteDraftSeason,
+  deleteSeason,
   saveResult,
   clearResult,
   setMatchStatus,
   rescheduleMatch,
   addMatch,
 } from './writes.js'
+
+export { SEASON_EDITABLE } from './validate.js'

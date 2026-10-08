@@ -6,24 +6,24 @@ import {
   getDocs,
   serverTimestamp,
   setDoc,
-  Timestamp,
   updateDoc,
   writeBatch,
 } from 'firebase/firestore'
 import { db } from '../lib/firebase.js'
 import { leagueDoc, playerDoc, scheduledMatchDoc, seasonDoc } from './documents.js'
+import {
+  assertLegs,
+  assertParticipantsList,
+  assertReasonable,
+  assertSeasonNumber,
+  normalizePoints,
+  normalizeQualificationSpots,
+  requiredText,
+  seasonPatch,
+  toTimestamp,
+} from './validate.js'
 
-const MIN_MS = Date.UTC(2020, 0, 1)
-const MAX_AHEAD_MS = 800 * 24 * 60 * 60 * 1000
 const OPEN_STATUSES = ['scheduled', 'postponed', 'void']
-
-function requiredText(value, max, label) {
-  const text = typeof value === 'string' ? value.trim() : ''
-  if (text.length < 1 || text.length > max) {
-    throw new Error(`${label} must be 1–${max} characters`)
-  }
-  return text
-}
 
 function normalizeShortCode(value) {
   const code = typeof value === 'string' ? value.trim().toUpperCase() : ''
@@ -41,27 +41,6 @@ function normalizeColor(value) {
   return color.toUpperCase()
 }
 
-function assertSeasonNumber(number) {
-  if (!Number.isInteger(number) || number < 1 || number > 999) {
-    throw new Error('Season number must be an integer from 1 to 999')
-  }
-}
-
-function assertLegs(legs) {
-  if (legs !== 1 && legs !== 2) throw new Error('Legs must be 1 or 2')
-}
-
-function assertParticipantsList(ids) {
-  if (!Array.isArray(ids) || ids.length < 2 || ids.length > 12) {
-    throw new Error('A season needs 2–12 participants')
-  }
-  if (ids.some((id) => typeof id !== 'string' || id.length < 1 || id.includes('/'))) {
-    throw new Error('Participant ids are invalid')
-  }
-  if (new Set(ids).size !== ids.length) throw new Error('Participants must be unique')
-  return ids
-}
-
 function assertMatchday(matchday) {
   if (!Number.isInteger(matchday) || matchday < 1 || matchday > 60) {
     throw new Error('Matchday must be an integer from 1 to 60')
@@ -71,41 +50,6 @@ function assertMatchday(matchday) {
 function assertScore(value) {
   if (!Number.isInteger(value) || value < 0 || value > 99) {
     throw new Error('Goals must be an integer from 0 to 99')
-  }
-}
-
-function normalizePoints(points = {}) {
-  const next = {
-    win: points.win ?? 3,
-    draw: points.draw ?? 1,
-    loss: points.loss ?? 0,
-  }
-  for (const [label, value] of Object.entries(next)) {
-    if (!Number.isInteger(value) || value < 0 || value > 20) {
-      throw new Error(`Points for a ${label} must be an integer from 0 to 20`)
-    }
-  }
-  return next
-}
-
-function toTimestamp(value) {
-  if (value == null || value === '') return null
-  if (value instanceof Timestamp) return value
-  if (value instanceof Date) return Timestamp.fromDate(value)
-  if (typeof value === 'number') return Timestamp.fromMillis(value)
-  if (typeof value === 'string') {
-    const parsed = new Date(value)
-    if (Number.isNaN(parsed.getTime())) throw new Error('Invalid date')
-    return Timestamp.fromDate(parsed)
-  }
-  throw new Error('Invalid date')
-}
-
-function assertReasonable(timestamp, label) {
-  if (timestamp == null) return
-  const millis = timestamp.toMillis()
-  if (millis < MIN_MS || millis > Date.now() + MAX_AHEAD_MS) {
-    throw new Error(`${label} is out of range`)
   }
 }
 
@@ -252,10 +196,12 @@ export async function createSeason(leagueId, input) {
   const startDate = toTimestamp(input.startDate)
   if (startDate == null) throw new Error('Start date is required')
   assertReasonable(startDate, 'Start date')
+  const participantIds = assertParticipantsList(input.participantIds)
   const ref = await addDoc(collection(db, 'leagues', leagueId, 'seasons'), seasonDoc({
     name: requiredText(input.name, 60, 'Season name'),
     number: input.number,
-    participantIds: assertParticipantsList(input.participantIds),
+    participantIds,
+    qualificationSpots: normalizeQualificationSpots(input.qualificationSpots ?? 1, participantIds.length),
     legs: input.legs ?? 1,
     points: normalizePoints(input.points),
     startDate,
@@ -265,32 +211,10 @@ export async function createSeason(leagueId, input) {
 
 export async function updateSeason(leagueId, seasonId, patch) {
   const season = await requireSeason(leagueId, seasonId)
-  if (season.status !== 'draft') {
-    const locked = ['number', 'participantIds', 'legs', 'points', 'startDate']
-    if (locked.some((key) => patch[key] != null)) {
-      throw new Error('Season setup can only be edited while it is a draft')
-    }
-  }
-  const next = { updatedAt: serverTimestamp() }
-  if (patch.name != null) next.name = requiredText(patch.name, 60, 'Season name')
-  if (patch.number != null) {
-    assertSeasonNumber(patch.number)
-    next.number = patch.number
-  }
-  if (patch.participantIds != null) next.participantIds = assertParticipantsList(patch.participantIds)
-  if (patch.legs != null) {
-    assertLegs(patch.legs)
-    next.legs = patch.legs
-  }
-  if (patch.points != null) next.points = normalizePoints(patch.points)
-  if (patch.startDate != null) {
-    const startDate = toTimestamp(patch.startDate)
-    if (startDate == null) throw new Error('Start date is required')
-    assertReasonable(startDate, 'Start date')
-    next.startDate = startDate
-  }
-  if (Object.keys(next).length === 1) throw new Error('Nothing to update')
-  await updateDoc(seasonRef(leagueId, seasonId), next)
+  await updateDoc(seasonRef(leagueId, seasonId), {
+    ...seasonPatch(season, patch),
+    updatedAt: serverTimestamp(),
+  })
 }
 
 export async function replaceFixtures(leagueId, seasonId, fixtures) {
@@ -405,19 +329,33 @@ export async function reopenSeason(leagueId, seasonId) {
   await batch.commit()
 }
 
-export async function deleteDraftSeason(leagueId, seasonId) {
+export async function deleteSeason(leagueId, seasonId) {
   const seasonSnap = await getDoc(seasonRef(leagueId, seasonId))
   if (!seasonSnap.exists()) return
-  if (seasonSnap.data().status !== 'draft') throw new Error('Only a draft season can be deleted')
+  const status = seasonSnap.data().status
+  if (status !== 'draft' && status !== 'active') throw new Error('A completed season cannot be deleted')
   const league = leagueRef(leagueId)
   const leagueSnap = await getDoc(league)
-  if (leagueSnap.data()?.activeSeasonId === seasonId) {
+  const isCurrent = leagueSnap.data()?.activeSeasonId === seasonId
+  const matches = await getDocs(collection(db, 'leagues', leagueId, 'seasons', seasonId, 'matches'))
+
+  if (status === 'active') {
+    // Rules only allow this as one batch: matches, season, and the league pointer together.
+    if (matches.size > 498) throw new Error('Too many matches to delete in one go')
+    const batch = writeBatch(db)
+    matches.docs.forEach((match) => batch.delete(match.ref))
+    batch.delete(seasonRef(leagueId, seasonId))
+    if (isCurrent) batch.update(league, { activeSeasonId: null, updatedAt: serverTimestamp() })
+    await batch.commit()
+    return
+  }
+
+  if (isCurrent) {
     await updateDoc(league, {
       activeSeasonId: null,
       updatedAt: serverTimestamp(),
     })
   }
-  const matches = await getDocs(collection(db, 'leagues', leagueId, 'seasons', seasonId, 'matches'))
   await commitInBatches([
     ...matches.docs.map((match) => (batch) => batch.delete(match.ref)),
     (batch) => batch.delete(seasonRef(leagueId, seasonId)),
