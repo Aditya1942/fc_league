@@ -593,9 +593,9 @@ describe('firestore rules', () => {
     await assertFails(deleteDoc(seasonRef))
   }, 20000)
 
-  it('deletes an active season and its 40 matches only in one batch that clears the pointer', async () => {
+  it('deletes an active season and its 140 matches only in one batch that clears the pointer', async () => {
     const db = await seedDraft()
-    const ids = Array.from({ length: 40 }, (_, index) => `m${index + 1}`)
+    const ids = Array.from({ length: 140 }, (_, index) => `m${index + 1}`)
     const seed = writeBatch(db)
     ids.forEach((id) => seed.set(doc(db, `leagues/lg/seasons/s1/matches/${id}`), scheduled()))
     await assertSucceeds(seed.commit())
@@ -668,5 +668,42 @@ describe('firestore rules', () => {
       updatedAt: serverTimestamp(),
     }))
     await assertFails(updateDoc(seasonRef, { championId: ids[1], updatedAt: serverTimestamp() }))
+  }, 20000)
+
+  it('keeps the standings snapshot and setup locked across every transition', async () => {
+    const db = await seedDraft()
+    const seasonRef = doc(db, 'leagues/lg/seasons/s1')
+    const leagueRef = doc(db, 'leagues/lg')
+
+    const smuggle = writeBatch(db)
+    smuggle.update(seasonRef, { status: 'active', championId: 'p1', finalStandings: emptyStandings(), updatedAt: serverTimestamp() })
+    smuggle.update(leagueRef, { activeSeasonId: 's1', updatedAt: serverTimestamp() })
+    await assertFails(smuggle.commit())
+
+    await activateS1(db)
+    await assertFails(updateDoc(seasonRef, { endDate: serverTimestamp(), updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(seasonRef, { finalStandings: emptyStandings(), updatedAt: serverTimestamp() }))
+
+    const complete = (patch) => updateDoc(seasonRef, {
+      status: 'completed',
+      championId: 'p1',
+      finalStandings: emptyStandings(),
+      endDate: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      ...patch,
+    })
+    await assertFails(complete({ championId: 'outsider' }))
+    await assertFails(complete({ finalStandings: emptyStandings().slice(0, 1) }))
+    await assertFails(complete({ participantIds: ['p1', 'p3'] }))
+    await assertSucceeds(complete({}))
+    await assertSucceeds(updateDoc(leagueRef, { activeSeasonId: null, updatedAt: serverTimestamp() }))
+
+    await assertFails(updateDoc(seasonRef, { participantIds: ['p2', 'p1'], updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(seasonRef, { endDate: Timestamp.now(), updatedAt: serverTimestamp() }))
+
+    const staleReopen = writeBatch(db)
+    staleReopen.update(seasonRef, { status: 'active', updatedAt: serverTimestamp() })
+    staleReopen.update(leagueRef, { activeSeasonId: 's1', updatedAt: serverTimestamp() })
+    await assertFails(staleReopen.commit())
   }, 20000)
 })
