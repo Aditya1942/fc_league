@@ -15,7 +15,8 @@
   --form-w-ink: color-mix(in srgb, var(--clay-mint) 22%, #102018);
   --form-d-ink: var(--muted);
   --form-l-ink: color-mix(in srgb, var(--clay-pink) 18%, #301018);
-  --zone-champion: color-mix(in srgb, var(--clay-mint) 52%, #1d6b45);
+  --zone-champion: color-mix(in srgb, var(--clay-peach) 40%, #b7791f);
+  --zone-qualify: color-mix(in srgb, var(--clay-mint) 52%, #1d6b45);
   --zone-last: color-mix(in srgb, var(--clay-pink) 48%, #9c3048);
   --lip-primary: color-mix(in srgb, var(--clay-blue) 68%, var(--ink));
   --lip-soft: color-mix(in srgb, var(--surface) 42%, #7f93ab);

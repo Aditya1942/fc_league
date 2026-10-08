@@ -3,3 +3,4 @@ export { allTimeTable, computeForm, computeStandings, seasonOrderOf } from './st
 export { compareFormOrder } from './time.js'
 export { headToHead, playerCareer, seasonLeaders } from './career.js'
 export { currentMatchday } from './matchday.js'
+export { qualificationSpotsOf, tableZones } from './zones.js'

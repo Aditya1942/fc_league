@@ -12,11 +12,16 @@ const COLUMNS = [
   { key: 'points', label: 'Pts', title: 'Points' },
 ]
 
+const ZONE_COLORS = {
+  champion: 'var(--zone-champion)',
+  qualify: 'var(--zone-qualify)',
+  last: 'var(--zone-last)',
+}
+
 function zoneColor(zone) {
   if (!zone) return undefined
   if (zone.color) return zone.color
-  if (zone.tone === 'last' || zone.id === 'last') return 'var(--zone-last)'
-  return 'var(--zone-champion)'
+  return ZONE_COLORS[zone.id] ?? ZONE_COLORS[zone.tone] ?? ZONE_COLORS.champion
 }
 
 function zoneFor(row, zones) {

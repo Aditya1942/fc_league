@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router'
+import { tableZones } from '../../engine/index.js'
 import {
   useLeagueData,
   useQueryParam,
@@ -9,7 +10,6 @@ import {
 import { EmptyState, IconTable, SegmentedTabs, StandingsTable } from '../../ui/index.js'
 import { LoadingCards } from './components/LoadingCards.jsx'
 import { SeasonSelect } from './components/SeasonSelect.jsx'
-import { tableZones } from './format.js'
 
 const TABS = [
   { id: 'all', label: 'All' },
@@ -39,7 +39,7 @@ export default function TablePage() {
         <StandingsTable
           rows={standings}
           players={playersById}
-          zones={venue === 'all' ? tableZones(standings, season.status === 'completed') : []}
+          zones={venue === 'all' ? tableZones(standings, season) : []}
           onRowClick={(row) => navigate(`/players/${row.playerId}`)}
         />
       )}

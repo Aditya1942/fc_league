@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { expect, test } from 'vitest'
+import { tableZones } from '../engine/index.js'
 import {
   BottomNav,
   ClayButton,
@@ -70,6 +71,31 @@ test('standings show the club, points header, and zone legend', () => {
   expect(html).toContain('Champion')
   expect(html).toContain('Pts')
   expect(html).toContain('+2')
+})
+
+test('standings colour title spot, qualification zone, and last place differently', () => {
+  const rows = ['p1', 'p2', 'p3', 'p4'].map((playerId, index) => ({
+    playerId,
+    position: index + 1,
+    played: 0,
+    won: 0,
+    drawn: 0,
+    lost: 0,
+    goalsFor: 0,
+    goalsAgainst: 0,
+    goalDiff: 0,
+    points: 0,
+    form: [],
+  }))
+  const html = renderToStaticMarkup(createElement(StandingsTable, {
+    rows,
+    players: {},
+    zones: tableZones(rows, { status: 'active', qualificationSpots: 3 }),
+  }))
+  expect(html).toContain('var(--zone-champion)')
+  expect(html).toContain('var(--zone-qualify)')
+  expect(html).toContain('var(--zone-last)')
+  expect(html).toContain('Qualification zone')
 })
 
 test('score stepper, crest, tabs, toast, and nav render their labels', () => {

@@ -116,11 +116,3 @@ export function signed(value) {
 export function matchPath(match) {
   return `/matches/${match.seasonId}/${match.id}`
 }
-
-export function tableZones(rows, completed = false) {
-  if (rows.length < 2) return []
-  return [
-    { id: 'champion', label: completed ? 'Champion' : 'Title spot', positions: [1] },
-    { id: 'last', label: 'Last place', positions: [rows.length] },
-  ]
-}

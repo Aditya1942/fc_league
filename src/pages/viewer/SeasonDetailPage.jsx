@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { seasonLeaders } from '../../engine/index.js'
+import { seasonLeaders, tableZones } from '../../engine/index.js'
 import { podium, useLeagueData, useQueryParam, useSeasonData, useSwipeTabs } from '../../hooks/index.js'
 import {
   Chip,
@@ -15,7 +15,7 @@ import { LoadingCards } from './components/LoadingCards.jsx'
 import { MatchList } from './components/MatchList.jsx'
 import { PlayerBadge } from './components/PlayerRow.jsx'
 import { Section } from './components/Section.jsx'
-import { clubName, formatShortDate, matchPath, tableZones } from './format.js'
+import { clubName, formatShortDate, matchPath } from './format.js'
 
 const TABS = [
   { id: 'table', label: 'Table' },
@@ -131,7 +131,7 @@ export default function SeasonDetailPage() {
           <StandingsTable
             rows={standings}
             players={playersById}
-            zones={tableZones(standings, season.status === 'completed')}
+            zones={tableZones(standings, season)}
             onRowClick={(row) => navigate(`/players/${row.playerId}`)}
           />
         </Section>
